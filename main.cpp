@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
 
                 users_timer[connfd].address = client_address;
                 users_timer[connfd].sockfd = connfd;
-                heap_timer *timer = new heap_timer;
+                std::shared_ptr<heap_timer> timer = std::make_shared<heap_timer>();
                 timer->user_data = &users_timer[connfd];
                 timer->cb_func = cb_func;
                 time_t cur = time(NULL);
@@ -210,7 +210,7 @@ int main(int argc, char* argv[]) {
             }
             else if (events[i].events & EPOLLIN)
             {
-                heap_timer *timer = users_timer[sockfd].timer;
+                std::shared_ptr<heap_timer> timer = users_timer[sockfd].timer;
                 if (users[sockfd].read())
                 {
                     //一次性把所有数据都读完

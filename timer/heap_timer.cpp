@@ -1,19 +1,20 @@
 #include "heap_timer.h"
 
 
-void time_heap::add_timer(heap_timer* timer) {
+
+void time_heap::add_timer(std::shared_ptr<heap_timer> timer) {
     if (!timer) {
         return;
     }
     heap.push(timer);
 }
-void time_heap::del_timer(heap_timer *timer) {
+void time_heap::del_timer(std::shared_ptr<heap_timer> timer) {
     if (!timer) {
         return;
     }
     timer->m_adjust_times = -1;
 }
-void time_heap::adjust_timer(heap_timer *timer) {
+void time_heap::adjust_timer(std::shared_ptr<heap_timer> timer) {
     add_timer(timer);
     timer->m_adjust_times++;
 }
@@ -23,7 +24,7 @@ void time_heap::tick() {
         printf("no client connection\n");
         return;
     }
-    heap_timer *tmp;
+    std::shared_ptr<heap_timer> tmp;
     time_t cur = time(NULL);
     while (!heap.empty()) {
         tmp = heap.top();
@@ -45,5 +46,4 @@ void time_heap::tick() {
         tmp->cb_func(tmp->user_data);
         heap.pop();
     }
-    
 }
