@@ -98,7 +98,7 @@ public:
     static int *u_pipefd;
     time_heap m_time_heap;
     static int u_epollfd;
-    int m_TIMESLOT;
+    static int m_TIMESLOT;
 };
 
 #endif

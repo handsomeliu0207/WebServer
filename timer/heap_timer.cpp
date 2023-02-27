@@ -17,7 +17,6 @@ void time_heap::adjust_timer(std::shared_ptr<heap_timer> timer) {
     timer->m_adjust_times++;
 }
 void time_heap::tick() {
-    printf("tick\n");
     if (heap.empty()) {
         printf("no client connection\n");
         return;
@@ -39,6 +38,7 @@ void time_heap::tick() {
             continue;
         }
         if (tmp->expire > cur) {
+            Utils::m_TIMESLOT = tmp->expire - cur;
             break;
         }
         tmp->cb_func(tmp->user_data);
@@ -46,6 +46,7 @@ void time_heap::tick() {
     }
 }
 
+int Utils::m_TIMESLOT = 0;
 void Utils::init(int timeslot) {
     m_TIMESLOT = timeslot;
 }
