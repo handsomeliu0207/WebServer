@@ -17,6 +17,7 @@
 #include <sys/uio.h>
 #include <string.h>
 
+#include "../log/log.h"
 
 class http_conn {
 public:
@@ -61,12 +62,15 @@ public:
     ~http_conn() {};
 
     void process(); // 处理客户端请求
-    void init(int sockfd, const sockaddr_in &addr); //初始化新接受的连接
+    void init(int sockfd, const sockaddr_in &addr, int TRIGMode, int close_log); //初始化新接受的连接
     void close_conn();   // 关闭连接
     bool read();   //非阻塞的读
     bool write(); // 非阻塞的写
  
-
+public:
+    int m_state;  //Reactor模式下工作线程区分读写，读为0, 写为1
+    int timer_flag; //Reactor模式工作线程标记是否关闭连接
+    int improv; 
 private:
     void init();  // 初始化连接其余的信息
     HTTP_CODE process_read();                    // 解析HTTP请求
@@ -117,6 +121,9 @@ private:
     int bytes_have_send;
 
     CHECK_STATE m_check_state; // 主状态机当前所处的状态
+
+    int m_TRIGMode;
+    int m_close_log;
 
     locker m_usercountlocker; //用户数目锁
 };

@@ -20,18 +20,20 @@ int http_conn::m_user_count = 0;  //统计用户数量
 
 //设置文件描述符非阻塞
 int setnonblocking(int fd) {
-    int old_flag = fcntl(fd, F_GETFL);
-    int new_flag = old_flag | O_NONBLOCK;
-    fcntl(fd, F_SETFL, new_flag);
-    return old_flag;
+    int old_option = fcntl(fd, F_GETFL);
+    int new_option = old_option | O_NONBLOCK;
+    fcntl(fd, F_SETFL, new_option);
+    return old_option;
 }
 
 //添加需要监听的文件描述符到epoll中
-void addfd(int epollfd, int fd, bool one_shot) {
+void addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
     epoll_event event;
     event.data.fd = fd;
-    event.events = EPOLLIN | EPOLLRDHUP;
-    //event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+    if (1 == TRIGMode)
+        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+    else
+        event.events = EPOLLIN | EPOLLRDHUP;
     if (one_shot) {
         event.events |= EPOLLONESHOT;
     }
@@ -47,28 +49,34 @@ void removefd(int epollfd, int fd) {
 }
 
 // 修改文件描述符， 重置socket上的EPOLLONESHOT事件，以确保下一次可读时， EPOLLIN事件能触发
-void modfd(int epollfd, int fd, int ev)
+void modfd(int epollfd, int fd, int ev, int TRIGMode)
 {
     epoll_event event;
     event.data.fd = fd;
-    event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+    if (TRIGMode == 1) {
+        event.events = ev | EPOLLET |EPOLLONESHOT | EPOLLRDHUP;
+    } else {
+        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+    }
     epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
 }
 
 // 初始化连接
-void http_conn::init(int sockfd, const sockaddr_in &addr) {
+void http_conn::init(int sockfd, const sockaddr_in &addr, int TRIGMode, int close_log) {
     m_sockfd = sockfd;
     m_address = addr;
 
-    // 端口复用
-    int reuse = 1;
-    setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    // 端口复用, 为了避免TIME_WAIT状态，仅用于调试
+    // int reuse = 1;
+    // setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     // 添加到epoll对象中
-    addfd(m_epollfd, m_sockfd, true);
+    addfd(m_epollfd, m_sockfd, true, m_TRIGMode);
     m_usercountlocker.lock();
     m_user_count++; // 总用户数+1
     m_usercountlocker.unlock();
+    m_TRIGMode = TRIGMode;
+    m_close_log = close_log;
 
     init();
 }
@@ -111,20 +119,34 @@ bool http_conn::read() {
 
     //读取到的字节
     int bytes_read = 0;
-    while (true) {
+
+    //LT读取数据
+    if (0 == m_TRIGMode) {
         bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
-        if (bytes_read == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 没有数据
-                break;
-            }
-            return false;
-        } else if (bytes_read == 0) {
-            // 对方关闭连接
+        m_read_idx += bytes_read;
+
+        if (bytes_read <= 0) {
             return false;
         }
-        m_read_idx += bytes_read;
+        return true;
+    } else { //ET读取数据
+        while (true) {
+            bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
+            if (bytes_read == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // 没有数据
+                    break;
+                }
+                return false;
+            } else if (bytes_read == 0) {
+                // 对方关闭连接
+                return false;
+            }
+            m_read_idx += bytes_read;
+        }
+
     }
+
     printf("读取到数据：%s\n", m_read_buf);
     return true;
 }
@@ -136,13 +158,13 @@ http_conn::HTTP_CODE http_conn::process_read() {
 
     char *text = 0;
     while ( ((m_check_state == CHECK_STATE_CONTENT) && (line_status == LINE_OK)) 
-        || ((line_status = parse_line()) == LINE_OK)) {   //bug点： 中间“=” 写成了“==”
-            // 解析到了一行完整的数据， 或者解析到了请求体也是完整的数据
+        || ((line_status = parse_line()) == LINE_OK)) {  
+        // 解析到了一行完整的数据， 或者解析到了请求体也是完整的数据
 
-            // 获取一行数据
+        // 获取一行数据
         text = get_line();
         m_start_line = m_checked_idx;
-        printf("got 1 http line : %s\n", text);
+        LOG_INFO("%s", text);
         
         switch (m_check_state) {
             case CHECK_STATE_REQUESTLINE: {
@@ -175,7 +197,6 @@ http_conn::HTTP_CODE http_conn::process_read() {
             }
         }
     }
-
     return NO_REQUEST;
 }
 
@@ -208,8 +229,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char * text) {
         m_url += 7;
         m_url = strchr(m_url, '/');
     }
-    if (!m_url || m_url[0] != '/')
-    {
+    if (!m_url || m_url[0] != '/') {
         return BAD_REQUEST;
     }
     m_check_state = CHECK_STATE_HEADER; // 主状态机检查状态变成检查请求头   //bug点：“=” 写成了“==”
@@ -228,25 +248,19 @@ http_conn::HTTP_CODE http_conn::parse_headers(char * text) {
     } else if (strncasecmp(text, "Connection:", 11) == 0) {
         text += 11;
         text += strspn(text, " \t");
-        if (strcasecmp(text, "keep-alive") == 0)
-        {
+        if (strcasecmp(text, "keep-alive") == 0) {
             m_linger = true;
-            printf("m_linger = %d\n", m_linger);
         }
     } else if (strncasecmp(text, "Content-Length:", 15) == 0) {
         text += 15;
         text += strspn(text, " \t");
         m_content_length = atol(text);
-    }
-    else if (strncasecmp(text, "Host:", 5) == 0)
-    {
+    } else if (strncasecmp(text, "Host:", 5) == 0) {
         text += 5;
         text += strspn(text, " \t");
         m_host = text;
-    }
-    else
-    {
-        printf("oop! unknow header %s\n", text);
+    } else {
+        LOG_INFO("oop!unknow header: %s", text);
     }
     return NO_REQUEST;
 }
@@ -320,7 +334,7 @@ void http_conn::unmap() {
 bool http_conn::write() {
     int temp = 0;
     if (bytes_to_send == 0) {
-        modfd(m_epollfd, m_sockfd, EPOLLIN);
+        modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);
         init();
         return true;
     }
@@ -328,13 +342,13 @@ bool http_conn::write() {
         temp = writev(m_sockfd, m_iv, m_iv_count);
         if (temp <= -1) {
             if (errno == EAGAIN) {
-                modfd(m_epollfd, m_sockfd, EPOLLOUT);
+                modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
                 return true;
             }
             unmap();
             return false;
         }
-       
+
         bytes_have_send += temp;
         bytes_to_send -= temp;
         //处理数据过大发送不完全问题
@@ -349,7 +363,7 @@ bool http_conn::write() {
         if (bytes_to_send <= 0) {
             //发送HTTP响应成功， 根据HTTP请求中的Connection字段决定是否立即关闭连接
             unmap();
-            modfd(m_epollfd, m_sockfd, EPOLLIN);
+            modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);
             if (m_linger) {
                 init();
                 return true;
@@ -372,6 +386,9 @@ bool http_conn::add_response(const char *format, ...) {
     }
     m_write_idx += len;
     va_end( arg_list );
+
+    LOG_INFO("request:%s", m_write_buf);
+    
     return true;
 }
 bool http_conn::add_status_line(int status, const char *title) {
@@ -395,7 +412,7 @@ bool http_conn::add_content(const char* content) {
     return add_response("%s", content);
 }
 
-bool http_conn:: process_write(HTTP_CODE ret) {
+bool http_conn::process_write(HTTP_CODE ret) {
     switch (ret) {
         case INTERNAL_ERROR: {
             add_status_line(500, error_500_title);
@@ -464,14 +481,14 @@ void http_conn::process() {
     // 解析HTTP请求
     HTTP_CODE read_ret = process_read();
     if (read_ret == NO_REQUEST) {
-        modfd(m_epollfd, m_sockfd, EPOLLIN);
+        modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);
         return;
     }
- 
+
     // 生成响应
     bool write_ret = process_write(read_ret);
     if (!write_ret) {
         close_conn();
     }
-    modfd(m_epollfd, m_sockfd, EPOLLOUT);
+    modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
 }
