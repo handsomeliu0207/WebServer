@@ -59,17 +59,17 @@ void WebServer::trig_mode() {
     }
 }
 
-// void WebServer::log_write()
-// {
-//     if (0 == m_close_log)
-//     {
-//         //初始化日志
-//         if (1 == m_log_write)
-//             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
-//         else
-//             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
-//     }
-// }
+void WebServer::log_write()
+{
+    if (0 == m_close_log)
+    {
+        //初始化日志
+        if (1 == m_log_write)
+            Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
+        else
+            Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
+    }
+}
 
 
 
@@ -134,7 +134,7 @@ void WebServer::eventListen() {
 
 void WebServer::timer(int connfd, struct sockaddr_in client_address) {
     
-    users[connfd].init(connfd, client_address, m_CONNTrigmode);
+    users[connfd].init(connfd, client_address, m_CONNTrigmode, m_close_log);
 
     //初始化client_data数据
     //创建定时器，设置回调函数和超时时间，绑定用户数据，将定时器添加到定时器堆中
@@ -155,6 +155,8 @@ void WebServer::adjust_timer(std::shared_ptr<heap_timer> timer) {
     time_t cur = time(NULL);
     timer->expire = cur + 3 * TIMESLOT;
     utils.m_time_heap.adjust_timer(timer);
+
+    LOG_INFO("%s", "adjust timer once");
 }
 
 //关闭连接并将定时器从堆中删除
@@ -163,7 +165,7 @@ void WebServer::deal_timer(std::shared_ptr<heap_timer> timer, int sockfd) {
     if (timer) {
         utils.m_time_heap.del_timer(timer);
     }
-
+    LOG_INFO("close fd %d", users_timer[sockfd].sockfd);
 }
 
 bool WebServer::dealclinetdata() {
@@ -172,12 +174,12 @@ bool WebServer::dealclinetdata() {
     if (0 == m_LISTENTrigmode) {
         int connfd = accept(m_listenfd, (struct sockaddr *)&client_address, &client_addrlength);
         if (connfd < 0) {
-            //LOG_ERROR("%s:errno is:%d", "accept error", errno);
+            LOG_ERROR("%s:errno is:%d", "accept error", errno);
             return false;
         }
         if (http_conn::m_user_count >= MAX_FD) {
             utils.show_error(connfd, "Internal server busy");
-            //LOG_ERROR("%s", "Internal server busy");
+            LOG_ERROR("%s", "Internal server busy");
             return false;
         }
         timer(connfd, client_address);
@@ -185,12 +187,12 @@ bool WebServer::dealclinetdata() {
         while (1) {
             int connfd = accept(m_listenfd, (struct sockaddr *)&client_address, &client_addrlength);
             if (connfd < 0) {
-                //LOG_ERROR("%s:errno is:%d", "accept error", errno);
+                LOG_ERROR("%s:errno is:%d", "accept error", errno);
                 break;
             }
             if (http_conn::m_user_count >= MAX_FD) {
                 utils.show_error(connfd, "Internal server busy");
-                //LOG_ERROR("%s", "Internal server busy");
+                LOG_ERROR("%s", "Internal server busy");
                 break;
             }
             timer(connfd, client_address);
@@ -256,7 +258,6 @@ void WebServer::dealwithread(int sockfd) {
     } else {
         //proactor
         if (users[sockfd].read()) {
-            //LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
 
             //若监测到读事件，将该事件放入请求队列
             m_pool->append_p(users + sockfd);
@@ -294,8 +295,6 @@ void WebServer::dealwithwrite(int sockfd) {
     } else {
         //proactor
         if (users[sockfd].write()) {
-            //LOG_INFO("send data to the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
-
             if (timer) {
                 adjust_timer(timer);
             }
@@ -312,7 +311,7 @@ void WebServer::eventLoop() {
     while (!stop_server) {
         int number = epoll_wait(m_epollfd, events, MAX_EVENT_NUMBER, -1);
         if (number < 0 && errno != EINTR) {
-            //LOG_ERROR("%s", "epoll failure");
+            LOG_ERROR("%s", "epoll failure");
             break;
         }
 
@@ -333,8 +332,9 @@ void WebServer::eventLoop() {
             //处理信号
             else if ((sockfd == m_pipefd[0]) && (events[i].events & EPOLLIN)) {
                 bool flag = dealwithsignal(timeout, stop_server);
-                //if (false == flag)
-                    //LOG_ERROR("%s", "dealclientdata failure");
+                if (false == flag) {
+                    LOG_ERROR("%s", "dealclientdata failure");
+                }          
             }
             //处理客户连接上接收到的数据
             else if (events[i].events & EPOLLIN) {
@@ -347,7 +347,7 @@ void WebServer::eventLoop() {
         if (timeout) {
             utils.timer_handler();
 
-            //LOG_INFO("%s", "timer tick");
+            LOG_INFO("%s", "timer tick");
 
             timeout = false;
         }
