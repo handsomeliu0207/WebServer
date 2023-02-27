@@ -18,7 +18,7 @@ void time_heap::adjust_timer(std::shared_ptr<heap_timer> timer) {
 }
 void time_heap::tick() {
     if (heap.empty()) {
-        printf("no client connection\n");
+        //printf("no client connection\n");
         return;
     }
     std::shared_ptr<heap_timer> tmp;
