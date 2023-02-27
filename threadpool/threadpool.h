@@ -12,10 +12,11 @@
 template<typename T>
 class threadpool {
 public:
-    threadpool(int thread_number = 8, int max_requests = 10000);
+    threadpool(int actor_model, int thread_number = 8, int max_requests = 10000);
     ~threadpool();
     //添加任务
-    bool append(T *request);
+    bool append(T *request, int state);
+    bool append_p(T *request);
 
 private:
     static void *worker(void *arg);
@@ -42,17 +43,19 @@ private:
 
     //是否结束线程
     bool m_stop;
+
+    //模型切换
+    int m_actor_model;
 };
 
 template<typename T>
-threadpool<T>::threadpool(int thread_number, int max_requests) : 
-    m_thread_number(thread_number), m_max_requests(max_requests), 
+threadpool<T>::threadpool(int actor_model, int thread_number, int max_requests) : 
+    m_actor_model(actor_model), m_thread_number(thread_number), m_max_requests(max_requests), 
     m_stop(false), m_threads(NULL) {
     
     if ((thread_number <= 0) || (max_requests <= 0)) {
         throw std::exception();
     }
-
     m_threads = new pthread_t[m_thread_number];
     if (!m_threads) {
         throw std::exception();
@@ -60,7 +63,7 @@ threadpool<T>::threadpool(int thread_number, int max_requests) :
 
     //创建thread_number个线程，并将它们设置为线程脱离
     for (int i = 0; i < thread_number; i++) {
-        printf("create the %dth thread\n", i);
+        //printf("create the %dth thread\n", i);
 
         if (pthread_create(m_threads + i, NULL, worker, this) != 0) {
             delete[] m_threads;
@@ -81,13 +84,28 @@ threadpool<T>::~threadpool() {
 }
 
 template<typename T>
-bool threadpool<T>::append(T* request) {
+bool threadpool<T>::append(T* request, int state) {
     m_queuelocker.lock();
     if (m_workqueue.size() > m_max_requests) {
         m_queuelocker.unlock();
         return false;
     }
+    request->m_state = state;
+    m_workqueue.push_back(request);
+    m_queuelocker.unlock();
+    m_queuestat.post();
+    return true;
+}
 
+template <typename T>
+bool threadpool<T>::append_p(T *request)
+{
+    m_queuelocker.lock();
+    if (m_workqueue.size() >= m_max_requests)
+    {
+        m_queuelocker.unlock();
+        return false;
+    }
     m_workqueue.push_back(request);
     m_queuelocker.unlock();
     m_queuestat.post();
@@ -118,8 +136,27 @@ void threadpool<T>::run() {
         if (!request) {
             continue;
         }
-
-        request->process();
+        //reactor
+        if (1 == m_actor_model) {
+            if (0 == request->m_state) {
+                if (request->read()) {
+                    request->improv = 1;    
+                    request->process();
+                } else {
+                    request->improv = 1;
+                    request->timer_flag = 1;
+                }
+            } else {
+                if (request->write()) {
+                    request->improv = 1;
+                } else {
+                    request->improv = 1;
+                    request->timer_flag = 1;
+                }
+            }
+        } else { //proactor
+            request->process();
+        }
     }
 }
 
