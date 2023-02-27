@@ -244,10 +244,8 @@ void WebServer::dealwithread(int sockfd) {
         m_pool->append(users + sockfd, 0);
 
         while (true) {
-            if (1 == users[sockfd].improv)
-            {
-                if (1 == users[sockfd].timer_flag)
-                {
+            if (1 == users[sockfd].improv) {
+                if (1 == users[sockfd].timer_flag) {
                     deal_timer(timer, sockfd);
                     users[sockfd].timer_flag = 0;
                 }
@@ -262,8 +260,7 @@ void WebServer::dealwithread(int sockfd) {
             //若监测到读事件，将该事件放入请求队列
             m_pool->append_p(users + sockfd);
 
-            if (timer)
-            {
+            if (timer) {
                 adjust_timer(timer);
             }
         } else {
