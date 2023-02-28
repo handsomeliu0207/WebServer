@@ -147,7 +147,7 @@ bool http_conn::read() {
 
     }
 
-    printf("读取到数据：%s\n", m_read_buf);
+    //printf("读取到数据：%s\n", m_read_buf);
     return true;
 }
 
