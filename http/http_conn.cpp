@@ -189,7 +189,7 @@ http_conn::HTTP_CODE http_conn::process_read() {
                 if (ret == GET_REQUEST) {
                     return do_request();
                 }
-                line_status == LINE_OPEN;
+                line_status = LINE_OPEN;
                 break;
             }
             default: {
